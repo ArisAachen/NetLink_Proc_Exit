@@ -11,5 +11,4 @@ type CnMsg struct {
 	Ack  uint32
 	Len  uint16
 	Flag uint16
-	// Data []uint8
 }

@@ -6,17 +6,11 @@ import (
 	"golang.org/x/sys/unix"
 	"log"
 	"time"
-	"unsafe"
 )
 
-// #include "msg_file.h"
+// #include <linux/connector.h>
 // #include <linux/cn_proc.h>
 import "C"
-
-const (
-	procListen = 1 + iota
-	procIgnore
-)
 
 func main() {
 	sock, err := unix.Socket(unix.AF_NETLINK, unix.SOCK_DGRAM, unix.NETLINK_CONNECTOR)
@@ -47,19 +41,14 @@ func main() {
 
 	sendMsg(sock, kernelSockAddr, C.PROC_CN_MCAST_LISTEN)
 
-	// defer sendMsg(sock, kernelSockAddr, 2)
-
-	//err = changeListenMode(sock, kernelSockAddr, procListen)
-	//if err != nil {
-	//
-	//}
-	//
-	//// defer changeListenMode(sock, kernelSockAddr, procIgnore)
-	//
 	go func(fd int, sockAddr *unix.SockaddrNetlink) {
 		for {
-			pid := recvExitPid(fd, sockAddr)
-			log.Printf(">>>>>> exit pid is %v", pid)
+			var buf []byte
+			_, _, _, _, err := unix.Recvmsg(fd, buf, nil, 0)
+			if err != nil {
+				log.Fatal(err)
+			}
+			log.Println(">>>>>> print success")
 		}
 	}(sock, kernelSockAddr)
 
@@ -75,7 +64,7 @@ func sendMsg(fd int, sockAddr unix.Sockaddr, proto int) error {
 		},
 		Ack: 0,
 		Seq: 0,
-		Len: uint16(binary.Size(proto)),
+		Len: uint16(binary.Size(uint32(proto))),
 	}
 
 	nlMsg := unix.NlMsghdr{
@@ -88,42 +77,28 @@ func sendMsg(fd int, sockAddr unix.Sockaddr, proto int) error {
 
 	// write buf
 	buf := bytes.NewBuffer(make([]byte, 0, nlMsg.Len))
-	err := binary.Write(buf, binary.BigEndian, nlMsg)
+	err := binary.Write(buf, binary.LittleEndian, nlMsg)
 	if err != nil {
 		log.Printf(">>>>>> write nl proto failed, err: %v \n", err)
 		return err
 	}
 
-	err = binary.Write(buf, binary.BigEndian, cnMsg)
+	err = binary.Write(buf, binary.LittleEndian, cnMsg)
 	if err != nil {
 		log.Printf(">>>>>> write nl cn msg failed, err: %v \n", err)
 		return err
 	}
 
-	err = binary.Write(buf, binary.BigEndian, uint32(proto))
+	err = binary.Write(buf, binary.LittleEndian, uint32(proto))
 	if err != nil {
 		log.Printf(">>>>>> write nl cn msg failed, err: %v \n", err)
 		return err
 	}
 
-	err = unix.Sendmsg(fd, buf.Bytes(), nil, sockAddr, 0)
+	err = unix.Sendto(fd, buf.Bytes(), 0, sockAddr)
 	if err != nil {
 		log.Printf(">>>>>> send msg failed, err: %v \n", err)
 		return err
 	}
 	return nil
-}
-
-//func changeListenMode(fd int, sockAddr *unix.SockaddrNetlink, mode int) error {
-//	addr := *(*C.struct_sockaddr_nl)(unsafe.Pointer(sockAddr))
-//	ret := C.change_listen_mode(C.int(fd), addr, C.int(mode))
-//	if ret == -1 {
-//		return errors.New("change mode failed")
-//	}
-//	return nil
-//}
-
-func recvExitPid(fd int, sock *unix.SockaddrNetlink) int {
-	pid := C.recv_exit_pid(C.int(fd), *(*C.struct_sockaddr_nl)(unsafe.Pointer(sock)))
-	return int(pid)
 }
